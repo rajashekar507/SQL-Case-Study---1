@@ -1,0 +1,203 @@
+
+
+I have used PostgreSQL so these are the steps I have followed
+
+#Creating a database "japan_Rest "
+Create database japan_Rest ;
+
+#Creating a 3 tables ("sales ", "menu","members")
+Create Table sales (
+customer_id VARCHAR(255) NOT NULL,
+order_date DATE,
+product_id int8 
+);
+
+
+Create a Table menu (
+product_id int8 NOT NULL,
+product_name CHAR(50),
+price NUMERIC 
+);
+
+
+Create Table members (
+customer_id VARCHAR(255) PRIMARY KEY,
+join_date DATE
+);
+
+#Inserting the values into the tables
+
+INSERT INTO sales ("customer_id", "order_date", "product_id")
+VALUES
+  ('A', '2021-01-01', '1'),
+  ('A', '2021-01-01', '2'),
+  ('A', '2021-01-07', '2'),
+  ('A', '2021-01-10', '3'),
+  ('A', '2021-01-11', '3'),
+  ('A', '2021-01-11', '3'),
+  ('B', '2021-01-01', '2'),
+  ('B', '2021-01-02', '2'),
+  ('B', '2021-01-04', '1'),
+  ('B', '2021-01-11', '1'),
+  ('B', '2021-01-16', '3'),
+  ('B', '2021-02-01', '3'),
+  ('C', '2021-01-01', '3'),
+  ('C', '2021-01-01', '3'),
+  ('C', '2021-01-07', '3');
+
+
+INSERT INTO menu
+  ("product_id", "product_name", "price")
+VALUES
+  ('1', 'sushi', '10'),
+  ('2', 'curry', '15'),
+  ('3', 'ramen', '12');
+
+
+
+INSERT INTO members
+  ("customer_id", "join_date")
+VALUES
+  ('A', '2021-01-07'),
+  ('B', '2021-01-09');
+
+
+ Following case study questions  & Answers below it:
+
+1)What is the total amount each customer spent at the restaurant?
+2)How many days has each customer visited the restaurant?
+3)What was the first item from the menu purchased by each customer?
+4)What is the most purchased item on the menu and how many times was it purchased by all customers?
+5)Which item was the most popular for each customer?
+6)Which item was purchased first by the customer after they became a member?
+7)Which item was purchased just before the customer became a member?
+8)What is the total items and amount spent for each member before they became a member?
+9)If each $1 spent equates to 10 points and sushi has a 2x points multiplier - how many points would each customer have?
+10)In the first week after a customer joins the program (including their join date) they earn 2x points on all items, not just sushi - how many points do customer A and B have at the end of January?
+
+
+Answers ::--
+1)
+SELECT s.customer_id, SUM(m.price) AS total_amount_spent
+FROM sales as s
+JOIN menu as m 
+ON s.product_id = m.product_id
+GROUP BY s.customer_id;
+
+
+2)
+SELECT customer_id, COUNT(DISTINCT order_date) AS days_visited
+FROM sales
+GROUP BY customer_id;
+
+
+3)
+SELECT s.customer_id, s.product_id AS first_purchase_product_id, m.product_name AS first_purchase_product_name
+FROM (
+    SELECT customer_id, MIN(order_date) AS first_order_date
+    FROM sales
+    GROUP BY customer_id
+) AS first_orders
+JOIN sales s 
+ON first_orders.customer_id = s.customer_id AND first_orders.first_order_date = s.order_date
+JOIN menu m 
+ON s.product_id = m.product_id;
+
+
+
+4)
+SELECT m.product_name AS most_purchased_item, COUNT(*) AS total_purchases
+FROM sales s
+JOIN menu m ON s.product_id = m.product_id
+GROUP BY m.product_name
+ORDER BY total_purchases DESC
+LIMIT 1;
+
+
+5)
+SELECT customer_id, product_name AS most_popular_item, purchase_count
+FROM (
+    SELECT s.customer_id, m.product_name, COUNT(*) AS purchase_count,
+           RANK() OVER (PARTITION BY s.customer_id ORDER BY COUNT(*) DESC) AS purchase_rank
+    FROM sales s
+    JOIN menu m ON s.product_id = m.product_id
+    GROUP BY s.customer_id, m.product_name
+) AS CustomerPurchaseCounts
+WHERE purchase_rank = 1;
+
+
+6)
+WITH FirstPurchaseAfterJoin AS (
+    SELECT s.customer_id, s.order_date, s.product_id,
+           m.join_date,
+           ROW_NUMBER() OVER (PARTITION BY s.customer_id ORDER BY s.order_date) AS purchase_rank
+    FROM sales s
+    JOIN members m ON s.customer_id = m.customer_id
+    WHERE s.order_date >= m.join_date
+)
+SELECT customer_id, order_date, product_id
+FROM FirstPurchaseAfterJoin
+WHERE purchase_rank = 1;
+
+7)
+WITH LastPurchaseBeforeJoin AS (
+    SELECT s.customer_id, s.order_date, s.product_id,
+           m.join_date,
+           ROW_NUMBER() OVER (PARTITION BY s.customer_id ORDER BY s.order_date DESC) AS purchase_rank
+    FROM sales s
+    JOIN members m ON s.customer_id = m.customer_id
+    WHERE s.order_date < m.join_date
+)
+SELECT customer_id, order_date, product_id
+FROM LastPurchaseBeforeJoin
+WHERE purchase_rank = 1;
+
+8)
+WITH PurchasesBeforeJoin AS (
+    SELECT s.customer_id, m2.join_date, m2.customer_id AS member_id,
+           COUNT(*) AS total_items,
+           SUM(m.price) AS total_amount_spent
+    FROM sales s
+    JOIN menu m ON s.product_id = m.product_id
+    JOIN members m2 ON s.customer_id = m2.customer_id
+    WHERE s.order_date < m2.join_date
+    GROUP BY s.customer_id, m2.join_date, m2.customer_id
+)
+SELECT member_id, total_items, total_amount_spent
+FROM PurchasesBeforeJoin;
+
+
+
+9)WITH TotalPoints AS (
+    SELECT s.customer_id,
+           SUM(CASE WHEN m.product_name = 'sushi' THEN 2 * m.price ELSE m.price END) AS total_spent
+    FROM sales s
+    JOIN menu m ON s.product_id = m.product_id
+    GROUP BY s.customer_id
+)
+SELECT customer_id, total_spent * 10 AS total_points
+FROM TotalPoints;
+
+
+
+10)
+
+WITH PointsEarned AS (
+    SELECT s.customer_id,
+           SUM(CASE 
+               WHEN s.order_date <= m.join_date + INTERVAL '7 days' THEN 20 * m.price -- 2x points for purchases made within the first week after joining
+               ELSE 10 * m.price -- Regular points for purchases made after the first week
+               END) AS total_points
+    FROM sales s
+    JOIN menu m ON s.product_id = m.product_id
+    JOIN members mb ON s.customer_id = mb.customer_id
+    WHERE EXTRACT(MONTH FROM s.order_date) = 1 -- Filter for January
+    GROUP BY s.customer_id
+)
+SELECT customer_id, total_points
+FROM PointsEarned;
+
+
+
+
+
